@@ -81,7 +81,7 @@ class HomeworkSystem:
                     conn = sqlite3.connect('HomeworkEvaluationSystem.db')
                     cursor = conn.cursor()
                     cursor.execute("""
-                        INSERT INTO users (username, password, user_type, name)
+                        INSERT INTO User (username, password, user_type)
                         VALUES (?, ?, 'Teacher', ?)
                     """, (username, password, name))
                     
@@ -118,27 +118,41 @@ class HomeworkSystem:
                 )
                 
                 if st.form_submit_button("Add Student"):
-                    conn = sqlite3.connect('HomeworkEvaluationSystem.db')
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        INSERT INTO users (username, password, user_type, name)
-                        VALUES (?, ?, 'Student', ?)
-                    """, (username, password, name))
-                    
-                    student_id = cursor.lastrowid
-                    
-                    # Add student-subject relationships
-                    for subject_name in selected_subjects:
-                        cursor.execute("SELECT id FROM subjects WHERE name=?", (subject_name,))
-                        subject_id = cursor.fetchone()[0]
+                    try:
+                        conn = sqlite3.connect('HomeworkEvaluationSystem.db', timeout=30)
+                        cursor = conn.cursor()
+                        
+                        # First verify all subjects exist before making any changes
+                        for subject_name in selected_subjects:
+                            cursor.execute("SELECT name FROM subjects WHERE code=?", (subject_name,))
+                            if cursor.fetchone() is None:
+                                st.error(f"Error: Subject '{subject_name}' does not exist in the system")
+                                return
+                        
+                        # If all subjects exist, proceed with adding the student
                         cursor.execute("""
-                            INSERT INTO user_subjects (user_id, subject_id)
-                            VALUES (?, ?)
-                        """, (student_id, subject_id))
-                    
-                    conn.commit()
-                    conn.close()
-                    st.success("Student added successfully!")
+                            INSERT INTO User (username, password, user_type)
+                            VALUES (?, ?, 'Student', ?)
+                        """, (username, password, name))
+                        
+                        student_id = cursor.lastrowid
+                        
+                        # Add student-subject relationships
+                        for subject_name in selected_subjects:
+                            cursor.execute("SELECT name FROM subjects WHERE code=?", (subject_name,))
+                            subject_id = cursor.fetchone()[0]
+                            cursor.execute("""
+                                INSERT INTO user_subjects (user_id, subject_id)
+                                VALUES (?, ?)
+                            """, (student_id, subject_id))
+                        
+                        conn.commit()
+                        st.success("Student added successfully!")
+                    except sqlite3.OperationalError as e:
+                        st.error("Database error: Please try again in a moment")
+                        raise e
+                    finally:
+                        conn.close()
 
         elif option == "Add Subject":
             with st.form(key='add_subject_form'):
@@ -162,7 +176,7 @@ class HomeworkSystem:
             conn = sqlite3.connect('HomeworkEvaluationSystem.db')
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, username, name FROM users 
+                SELECT id, username, name FROM User
                 WHERE user_type=?
             """, (account_type,))
             accounts = cursor.fetchall()
@@ -178,7 +192,7 @@ class HomeworkSystem:
                     account_id = accounts[[f"{acc[2]} ({acc[1]})" for acc in accounts].index(account_to_delete)][0]
                     conn = sqlite3.connect('HomeworkEvaluationSystem.db')
                     cursor = conn.cursor()
-                    cursor.execute("DELETE FROM users WHERE id=?", (account_id,))
+                    cursor.execute("DELETE FROM User WHERE id=?", (account_id,))
                     conn.commit()
                     conn.close()
                     st.success("Account deleted successfully!")
@@ -223,7 +237,7 @@ class HomeworkSystem:
             SELECT s.name 
             FROM subjects s
             JOIN user_subjects us ON s.id = us.subject_id
-            JOIN users u ON us.user_id = u.id
+            JOIN User u ON us.user_id = u.id
             WHERE u.username = ?
         """, (st.session_state.username,))
         subjects = cursor.fetchall()
@@ -244,7 +258,7 @@ class HomeworkSystem:
                         cursor = conn.cursor()
                         cursor.execute("""
                             SELECT DISTINCT u.id, u.name 
-                            FROM users u
+                            FROM User u
                             JOIN user_subjects us ON u.id = us.user_id
                             JOIN subjects s ON us.subject_id = s.id
                             WHERE u.user_type = 'Student' 
@@ -278,7 +292,7 @@ class HomeworkSystem:
                             cursor.execute("""
                                 INSERT INTO AssignmentStudent (student_id, assignment_id)
                                 SELECT DISTINCT u.id, ?
-                                FROM users u
+                                FROM User u
                                 JOIN user_subjects us ON u.id = us.user_id
                                 JOIN subjects s ON us.subject_id = s.id
                                 WHERE u.user_type = 'Student'
@@ -297,7 +311,7 @@ class HomeworkSystem:
                     FROM AssignmentStudent sa
                     JOIN assignments a ON sa.assignment_id = a.id
                     JOIN subjects s ON a.subject_id = s.id
-                    JOIN users u ON sa.student_id = u.id
+                    JOIN User u ON sa.student_id = u.id
                     WHERE s.name = ? AND sa.grade IS NULL
                 """, (selected_subject,))
                 pending_assignments = cursor.fetchall()
@@ -332,6 +346,8 @@ class HomeworkSystem:
                             st.rerun()
                 else:
                     st.info("No assignments pending for grading")
+        else:
+            st.warning("No subjects assigned to you. Please contact admin to assign subjects.")
 
         if st.button("Logout"):
             st.session_state.logged_in = False
@@ -348,7 +364,7 @@ class HomeworkSystem:
             SELECT s.name 
             FROM subjects s
             JOIN user_subjects us ON s.id = us.subject_id
-            JOIN users u ON us.user_id = u.id
+            JOIN User u ON us.user_id = u.id
             WHERE u.username = ?
         """, (st.session_state.username,))
         subjects = cursor.fetchall()
@@ -366,7 +382,7 @@ class HomeworkSystem:
                     FROM assignments a
                     JOIN subjects s ON a.subject_id = s.id
                     JOIN AssignmentStudent sa ON a.id = sa.assignment_id
-                    JOIN users u ON sa.student_id = u.id
+                    JOIN User u ON sa.student_id = u.id
                     WHERE s.name = ? AND u.username = ? AND sa.answer IS NULL
                 """, (selected_subject, st.session_state.username))
                 pending_assignments = cursor.fetchall()
@@ -393,7 +409,7 @@ class HomeworkSystem:
                                 UPDATE AssignmentStudent
                                 SET answer = ?
                                 WHERE assignment_id = ? AND student_id = (
-                                    SELECT id FROM users WHERE username = ?
+                                    SELECT id FROM User WHERE username = ?
                                 )
                             """, (answer, question_data[0], st.session_state.username))
                             conn.commit()
@@ -408,10 +424,10 @@ class HomeworkSystem:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT a.question_number, sa.grade, sa.feedback
-                    FROM submissions sa
+                    FROM AssignmentStudent sa
                     JOIN assignments a ON sa.assignment_id = a.id
                     JOIN subjects s ON a.subject_id = s.id
-                    JOIN users u ON sa.student_id = u.id
+                    JOIN User u ON sa.student_id = u.id
                     WHERE s.name = ? AND u.username = ? AND sa.grade IS NOT NULL
                 """, (selected_subject, st.session_state.username))
                 graded_assignments = cursor.fetchall()
@@ -428,6 +444,8 @@ class HomeworkSystem:
                         st.write("---")
                 else:
                     st.info("No graded assignments yet")
+        else:
+            st.warning("No subjects assigned to you. Please contact admin to assign subjects.")
 
         if st.button("Logout"):
             st.session_state.logged_in = False
@@ -437,4 +455,3 @@ class HomeworkSystem:
 
 if __name__ == "__main__":
     app = HomeworkSystem()
-
