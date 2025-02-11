@@ -130,11 +130,10 @@ class HomeworkSystem:
                                 return
                         
                         # If all subjects exist, proceed with adding the student
-                        cursor.execute("""
-                            INSERT INTO User (username, password, user_type)
-                            VALUES (?, ?, 'Student', ?)
-                        """, (username, password, name))
-                        
+                         cursor.execute("""
+                            INSERT INTO User (username, password, role)
+                            VALUES (?, ?, ?)
+                        """, (username, password, 'Student'))
                         student_id = cursor.lastrowid
                         
                         # Add student-subject relationships
